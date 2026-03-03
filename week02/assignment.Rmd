@@ -1,0 +1,98 @@
+---
+title: "Week 2 Assignment"
+author: "Arghavan Kassraie"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(AnnotationHub)     # to fetch genomes, annotations, etc.
+  library(ensembldb)         # to manipulate ensembl gene annotations
+  library(GenomicRanges)     # data structure for genomic ranges 
+  library(epiwraps)          # visualization
+})
+```
+
+## 1. Mouse EnsDb Object (GRCm38)
+
+
+```{r query_mouse_ensdb}
+ah <- AnnotationHub()
+query_result_1 <- query(ah, c("EnsDb", "Mus musculus", "102", "GRCm38"))
+query_result_1
+```
+
+```{r load_mouse_ensdb}
+mouse_ensdb <- ah[["AH89211"]]
+mouse_ensdb
+```
+
+## 2. Mouse Genome Sequence
+
+
+```{r query_mouse_genome}
+query_result_2 <- query(ah, c("dna_sm", "Mus musculus", "GRCm38"))
+query_result_2
+```
+
+```{r load_mouse_genome}
+mouse_gs_2bit <- ah[["AH49775"]]
+mouse_gs_2bit
+```
+
+## 3. Drosophila Genome Sequence
+
+
+```{r query_drosophila_genome}
+query_result_3 <- query(ah, c("dna_sm", "Drosophila", "BDGP6"))
+query_result_3 
+```
+
+```{r load_drosophila_genome}
+dros_gs_2bit <- ah[["AH49674"]]
+dros_gs_2bit
+```
+
+## 4. Protein-coding Genes Analysis
+
+Count the number of unique Ensembl gene IDs and gene symbols for protein-coding genes.
+
+```{r protein_coding_genes}
+# Extract protein-coding genes
+pc_genes <- genes(mouse_ensdb,
+                  filter = GeneBiotypeFilter("protein_coding"))
+
+# Count unique gene IDs and symbols
+n_gene_ids <- length(unique(pc_genes$gene_id))
+n_gene_symbols <- length(unique(pc_genes$gene_name))
+
+cat("Number of unique Ensembl gene IDs:", n_gene_ids, "\n")
+cat("Number of unique gene symbols:", n_gene_symbols, "\n")
+```
+
+## 5. Distribution of Spliced Transcript Lengths
+
+Analyze the distribution of spliced lengths for protein-coding transcripts.
+
+```{r transcript_lengths}
+# Extract protein-coding exons and group by transcript
+exons_by_tx <- exonsBy(mouse_ensdb, by = "tx",
+                       filter = TxBiotypeFilter("protein_coding"))
+
+# Compute spliced transcript lengths per transcript
+tx_lengths <- sapply(exons_by_tx, function(exon_gr) sum(width(exon_gr)))
+```
+
+```{r plot_transcript_distribution, fig.width=8, fig.height=6}
+# Plot distribution of spliced transcript lengths
+hist(tx_lengths,
+     breaks = 100,
+     main = "Distribution of Spliced Lengths\nProtein-coding Transcripts",
+     xlab = "Transcript Length",
+     ylab = "Frequency",
+     col = "blue",
+     border = "white")
+```
+
+
+It can be seen that most transcripts have a small length, with the distribution heavily skewed towards shorter transcripts. 
