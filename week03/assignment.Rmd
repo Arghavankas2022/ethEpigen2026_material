@@ -1,0 +1,105 @@
+---
+title: "Week 3 assignment"
+author: "Arghavan Kassraie"
+output: html_document
+---
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(Rsubread)      # read alignment
+  library(rtracklayer)   # read/write genomic file formats
+  library(Rfastp)        # read QC/trimming
+  library(epiwraps)      # plotting signal tracks and peak calling
+  library(ensembldb)     # gene annotations
+  library(GenomicRanges) # handling overlaps
+})
+ah <- AnnotationHub()
+```
+
+##Download the dataset
+```{r}
+options(timeout=3600)
+dir.create("raw")
+
+fastq_file <- "raw/CTCF.fastq.gz"
+if(!file.exists(fastq_file)) {
+  
+  download.file(
+  url = "https://www.encodeproject.org/files/ENCFF127RRR/@@download/ENCFF127RRR.fastq.gz",
+  destfile = "raw/CTCF.fastq.gz",
+  mode = "wb"
+)
+}
+```
+
+##Reads QC and trimming 
+```{r}
+dir.create("rfastp.trimmed")
+qc <- Rfastp::rfastp(fastq_file, thread=4, 
+                     outputFastq="rfastp.trimmed/CTCF")
+```
+
+## Genome index and alignment
+```{r} 
+genome <- ah[["AH49674"]]
+
+dir.create("BDGP6_genome", showWarnings = FALSE)
+genome_fasta <- "BDGP6_genome/genome.fasta.gz"
+index_prefix <- "BDGP6_genome/rsubread"
+
+if(!file.exists(paste0(index_prefix, ".reads"))) {
+  export(import.2bit(genome), genome_fasta, compress=TRUE)
+  Rsubread::buildindex(index_prefix, reference=genome_fasta)
+}
+
+# Align reads
+dir.create("aligned", showWarnings = FALSE)
+align.stats <- Rsubread::align(index=index_prefix, type="dna",
+                               readfile1="rfastp.trimmed/CTCF_R1.fastq.gz",
+                               output_file="aligned/CTCF.bam",
+                               nthreads=4, sortReadsByCoordinates=TRUE)
+
+total_reads <- align.stats["Total_reads", 1]
+mapped_reads <- align.stats["Mapped_reads", 1]
+mapped_percent <- (mapped_reads / total_reads) * 100
+
+```
+
+##Peak calling 
+```{r}
+dir.create("peaks")
+
+# Call peaks 
+peaks <- callPeaks(bam="aligned/CTCF.bam")
+num_peaks <- length(peaks)
+cat("1. Mapped Reads:", format(mapped_reads, big.mark=","), "\n")
+cat("2. Percentage Mapped:", round(mapped_percent, 2), "%\n")
+cat("3. Total Peaks Found:", format(num_peaks, big.mark=","), "\n")
+```
+
+##Finding a peak inside a gene 
+```{r}
+# Retrieve EnsDb for Drosophila Melanogaster
+ensdb <- ah[["AH119285"]]
+genes <- genes(ensdb)
+
+# Filter for protein coding genes
+prcg <- genes[which(genes$gene_biotype == "protein_coding")]
+
+# Find overlaps between our peaks and the protein-coding genes
+overlaps <- findOverlaps(peaks, prcg)
+overlapping_peaks <- peaks[queryHits(overlaps)]
+
+# Select the first overlapping peak for plotting
+target_peak <- overlapping_peaks[1]
+
+```
+
+##Signal plot around one of the peaks which is located inside a gene 
+```{r}
+plotSignalTracks(list(CTCF = "aligned/CTCF.bam", peaks = overlapping_peaks), 
+                 region = target_peak,
+                 extend = 1000, 
+                 tracks.params = list(ylim = c(0, 25)))
+```
+                
