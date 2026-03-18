@@ -1,0 +1,177 @@
+---
+title: "Week 4 assignment"
+author: "Arghavan Kassraie"
+output: html_document
+---
+
+```{r setup}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(GenomicRanges)
+  library(rtracklayer)
+  library(epiwraps)
+  library(ggplot2)
+  library(ComplexHeatmap)
+})
+```
+
+```{r}
+options(timeout=1800)
+dir.create("peaks", showWarnings=FALSE)
+
+download_if_missing <- function(url, dest){
+  if(!file.exists(dest)){
+    download.file(url, dest, mode="wb")
+  }
+}
+
+### mESC
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF460EOA/@@download/ENCFF460EOA.bed.gz",
+"peaks/mESC_p300.bed.gz")
+
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF824OIP/@@download/ENCFF824OIP.bed.gz",
+"peaks/mESC_H3K27ac.bed.gz")
+
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF558YNC/@@download/ENCFF558YNC.bed.gz",
+"peaks/mESC_H3K27me3.bed.gz")
+
+
+### Liver 
+
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF159ZWO/@@download/ENCFF159ZWO.bed.gz",
+"peaks/liver_p300.bed.gz")
+
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF221SKA/@@download/ENCFF221SKA.bed.gz",
+"peaks/liver_H3K27ac.bed.gz")
+
+download_if_missing(
+"https://www.encodeproject.org/files/ENCFF206GAK/@@download/ENCFF206GAK.bed.gz",
+"peaks/liver_H3K27me3.bed.gz")
+
+
+### unzip everything
+gzfiles <- list.files("peaks", pattern="gz$", full.names=TRUE)
+
+for(f in gzfiles){
+  R.utils::gunzip(f, remove=FALSE, overwrite=TRUE)
+}
+```
+
+```{r}
+peakfiles <- list.files("peaks", pattern=".bed$", full.names=TRUE)
+
+names(peakfiles) <- gsub(".bed","",basename(peakfiles))
+
+extraCols <- c(
+  signalValue = "numeric",
+  pValue = "numeric",
+  qValue = "numeric",
+  peak = "integer"
+)
+
+peaks <- lapply(peakfiles, function(f) {
+  df <- read.table(f, sep="\t", header=FALSE, stringsAsFactors=FALSE)
+  
+  df <- df[,1:3]
+  colnames(df) <- c("chr","start","end")
+  
+  GenomicRanges::makeGRangesFromDataFrame(df)
+})
+
+```
+
+```{r}
+ah <- AnnotationHub()
+
+ensdb <- ah[["AH89211"]]   # mouse EnsDb
+
+genes <- genes(ensdb)
+
+tss <- resize(genes, width=1, fix="start")
+seqlevelsStyle(tss) <- "UCSC"
+
+```
+
+```{r}
+tss_overlap <- data.frame(
+  mark=c("mESC_H3K27ac","mESC_H3K27me3","liver_H3K27ac","liver_H3K27me3"),
+  proportion=c(
+    sum(overlapsAny(tss, peaks$mESC_H3K27ac))/length(tss),
+    sum(overlapsAny(tss, peaks$mESC_H3K27me3))/length(tss),
+    sum(overlapsAny(tss, peaks$liver_H3K27ac))/length(tss),
+    sum(overlapsAny(tss, peaks$liver_H3K27me3))/length(tss)
+  )
+)
+
+```
+
+## What is the proportion of TSS that overlap H3K27ac, H3K27me3, and the combination of both, in each tissue?
+```{r}
+both_mESC <- overlapsAny(tss, peaks$mESC_H3K27ac) &
+             overlapsAny(tss, peaks$mESC_H3K27me3)
+
+both_liver <- overlapsAny(tss, peaks$liver_H3K27ac) &
+              overlapsAny(tss, peaks$liver_H3K27me3)
+
+prop_both <- data.frame(
+  tissue=c("mESC","Liver"),
+  proportion=c(mean(both_mESC), mean(both_liver))
+)
+
+data.frame(
+  Tissue = c("mESC", "mESC", "mESC", "Liver", "Liver", "Liver"),
+  Overlap = c("H3K27ac", "H3K27me3", "Both", "H3K27ac", "H3K27me3", "Both"),
+  Proportion = c(
+    tss_overlap$proportion[1], # mESC H3K27ac
+    tss_overlap$proportion[2], # mESC H3K27me3
+    prop_both$proportion[1],   # mESC Both
+    tss_overlap$proportion[3], # Liver H3K27ac
+    tss_overlap$proportion[4], # Liver H3K27me3
+    prop_both$proportion[2]    # Liver Both
+  )
+)
+
+```
+
+## What is the relationship between the 3 signals (p300, H3K27ac, and H3K27me3), and is it the same in both tissues?
+```{r}
+peaks_mESC <- list(
+  p300=peaks$mESC_p300,
+  H3K27ac=peaks$mESC_H3K27ac,
+  H3K27me3=peaks$mESC_H3K27me3
+)
+
+peaks_liver <- list(
+  p300=peaks$liver_p300,
+  H3K27ac=peaks$liver_H3K27ac,
+  H3K27me3=peaks$liver_H3K27me3
+)
+
+regionOverlaps(peaks_mESC)
+
+regionOverlaps(peaks_liver)
+
+cat("In both mESCs and liver tissue, there is a strong spatial correlation and substantial overlap between p300 and H3K27ac peaks. In contrast, H3K27me3 shows minimal overlap with these active marks. This pattern is consistent across both tissues.
+Biologically, p300 functions as a histone acetyltransferase (HAT) that catalyzes the addition of an acetyl group to histone H3 at lysine 27, generating the H3K27ac mark. As a result, regions bound by p300 are typically enriched for H3K27ac, reflecting active regulatory elements such as enhancers.
+On the other hand, H3K27me3 is a repressive histone modification associated with gene silencing. Since acetylation (H3K27ac) and methylation (H3K27me3) occur on the same lysine residue, they are mutually exclusive. This explains why H3K27me3 is largely separated from p300 and H3K27ac regions in both cell types.")
+```
+
+## What is the relationship between regulatory elements active in mESC and in the differentiated tissue?
+```{r}
+mESC_unique <- peaks$mESC_p300[!overlapsAny(peaks$mESC_p300, peaks$liver_p300)]
+
+liver_unique <- peaks$liver_p300[!overlapsAny(peaks$liver_p300, peaks$mESC_p300)]
+
+shared <- peaks$mESC_p300[overlapsAny(peaks$mESC_p300, peaks$liver_p300)]
+
+data.frame(
+  category=c("mESC specific","Liver specific","Shared"),
+  count=c(length(mESC_unique), length(liver_unique), length(shared))
+)
+cat("By comparing p300 peaks  between mESCs and Liver cells, it is obvious that the vast majority of active regulatory elements are strictly tissue specific (27,109 specific to mESC and 138,068 specific to Liver). Only a very tiny fraction (1,232) of regulatory elements are shared between the two. This minimal overlap shows the massive epigenomic reprogramming that drives cellular differentiation.")
+```
