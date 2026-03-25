@@ -1,0 +1,114 @@
+---
+title: "week 5 assignment"
+author: "Arghavan Kassraie"
+
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(edgeR)
+  library(SummarizedExperiment)
+  library(ggplot2)
+  library(sechm)
+})
+```
+
+## Load data
+
+```{r}
+download.file("https://ethz-ins.org/content/mouse_mm38_hippocampus.peakCounts.SE.rds",
+              "ATACstress.rds", mode="wb")
+
+se <- readRDS("ATACstress.rds")
+```
+
+## Prepare metadata
+
+```{r}
+samples <- colnames(se)
+
+# extract condition and sex from filenames
+se$condition <- ifelse(grepl("FSS", samples), "FSS", "CTRL")
+se$sex <- ifelse(grepl("female", samples), "female", "male")
+# assign rownames
+rownames(se) <- paste0("peak_", seq_len(nrow(se)))
+
+colData(se)
+```
+
+## Differential analysis: FSS vs CTRL
+
+```{r}
+dds <- DGEList(assay(se), group = se$condition)
+
+dds <- calcNormFactors(dds)
+dds <- estimateDisp(dds)
+
+res_stress <- as.data.frame(topTags(exactTest(dds), n = Inf))
+head(res_stress)
+```
+
+## Top 10 regions (FSS vs CTRL)
+
+```{r}
+top10_stress <- head(rownames(res_stress), 10)
+res_stress[top10_stress, ]
+```
+
+## Heatmap
+
+```{r}
+assay(se, "logcpm_stress") <- log1p(cpm(dds))
+
+sechm(se,
+      features = top10_stress,
+      assay = "logcpm_stress",
+      gaps_at = "condition")
+```
+
+## Differential analysis: Male vs Female
+
+```{r}
+dds <- DGEList(assay(se), group = se$sex)
+
+dds <- calcNormFactors(dds)
+dds <- estimateDisp(dds)
+
+res_sex <- as.data.frame(topTags(exactTest(dds), n = Inf))
+head(res_sex)
+```
+
+## Top 10 regions (Male vs Female)
+
+```{r}
+top10_sex <- head(rownames(res_sex), 10)
+res_sex[top10_sex, ]
+```
+
+## Heatmap
+
+```{r}
+assay(se, "logcpm_sex") <- log1p(cpm(dds))
+
+sechm(se,
+      features = top10_sex,
+      assay = "logcpm_sex",
+      gaps_at = "sex")
+```
+
+# Interpretation
+
+## FSS vs CTRL
+
+There is one sample extremely high accessibility (bright yellow column) across multiple peaks, while other samples show low accessibility (dark blue). FSS samples generally show moderate, uniform accessibility compared to controls. The extreme pattern in one control sample could suggest a biological outlier or technical artifact. In general The stress response in chromatin accessibility appears subtle.
+
+## Male vs Female
+
+Females and males show opposite accessibility pattern. All samples within each sex group show similar patterns. 
+
+The sex-based analysis shows much stronger and more consistent differential accessibility than the stress condition, suggesting sex has a more pronounced effect on chromatin landscape in hippocampus than acute stress.
+
