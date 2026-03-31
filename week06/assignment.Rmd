@@ -1,0 +1,87 @@
+---
+title: "Assignment Week 06"
+author: "Arghavan Kassraie"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(ggplot2)
+  library(motifmatchr)
+  library(Biostrings)
+  library(MotifDb)
+  library(TFBSTools)
+  library(universalmotif)
+  library(BSgenome.Hsapiens.UCSC.hg38)
+  library(jsonlite)
+})
+```
+
+## Choose a TF: EGR1 and download the peaks
+
+```{r}
+download.file("https://www.encodeproject.org/files/ENCFF375RDB/@@download/ENCFF375RDB.bed.gz",
+              "Human_EGR1_K562_ENCFF375RDB.bed.gz")
+peaks <- rtracklayer::import("Human_EGR1_K562_ENCFF375RDB.bed.gz", format="NarrowPeak")
+
+seqlevelsStyle(peaks) <- "UCSC"
+peaks_chr1 <- peaks[seqnames(peaks) == "chr1"]
+```
+
+## Identify the instances of the factor's motif
+
+```{r}
+motifs <- query(MotifDb, c("EGR1"))
+names(motifs)
+```
+
+```{r}
+# Select the HOCOMOCO human EGR1 motif
+motif <- motifs[["Hsapiens-HOCOMOCOv10-EGR1_HUMAN.H10MO.A"]]
+motif2 <- convert_motifs(motif, class = "TFBSTools-PWMatrix")
+view_motifs(convert_motifs(motif))
+```
+
+### Of all the peaks, what proportion contains a motif for the factor?
+
+```{r}
+moi <- motifmatchr::matchMotifs(motif2, subject = peaks_chr1,
+                                 genome = BSgenome.Hsapiens.UCSC.hg38,
+                                 out = "positions")
+moi <- moi[[1]]
+head(moi)
+hist(moi$score)
+```
+
+```{r}
+table(overlapsAny(peaks_chr1, moi))
+```
+
+```{r}
+peak_percentage <- sum(overlapsAny(peaks_chr1, moi)) / length(peaks_chr1) * 100
+cat("\nOf the", length(peaks_chr1), "peaks in chromosome 1,",
+    sum(overlapsAny(peaks_chr1, moi)),
+    "(", peak_percentage, "%) contain a motif for EGR1")
+```
+
+### Of all instances of that motif in the genome (or in one chromosome), what proportion is bound by the factor (i.e. has a peak)?
+
+```{r}
+# Scan the whole chr1 for EGR1 motif instances
+chr1_seq <- getSeq(BSgenome.Hsapiens.UCSC.hg38, "chr1")
+chr1_seq <- DNAStringSet(chr1_seq)
+names(chr1_seq) <- "chr1"
+
+motif_chr1 <- motifmatchr::matchMotifs(motif2, subject = chr1_seq,
+                                        out = "positions")[[1]]
+names(motif_chr1) <- "chr1"
+motif_chr1 <- as(motif_chr1, "GRanges")
+```
+
+```{r}
+motif_percentge <- sum(overlapsAny(motif_chr1, peaks_chr1)) / length(motif_chr1) * 100
+cat("\nOf the", length(motif_chr1), "motif instances in chromosome 1,",
+    sum(overlapsAny(motif_chr1, peaks_chr1)),
+    "(", motif_percentge, "%) overlap a peak")
+```
