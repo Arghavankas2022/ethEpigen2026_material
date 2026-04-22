@@ -1,0 +1,169 @@
+---
+title: "Week 7 assignment"
+author: "Arghavan Kassraie"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r }
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(AnnotationHub)
+  library(MotifDb)
+  library(universalmotif)
+  library(ensembldb)
+  library(ggplot2)
+  library(motifmatchr)
+  library(sechm)
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(limma)
+  library(betterChromVAR)
+})
+```
+
+# Part 1
+
+## Download the ATAC-seq bam files
+
+```{r}
+if (!file.exists("atac.chr19.bam")) {
+  download.file("https://ethz-ins.org/content/w7/atac.chr19.bam",
+                "atac.chr19.bam", mode = "wb")
+  download.file("https://ethz-ins.org/content/w7/atac.chr19.bam.bai",
+                "atac.chr19.bam.bai", mode = "wb")
+}
+```
+
+## Preparing tracks 
+
+```{r }
+bam <- "atac.chr19.bam"
+
+bam2bw(bam, output_bw = "NF_cuts.bw", paired = TRUE, binWidth = 1L,
+       type = "ends", minFragLength = 30, maxFragLength = 120,
+       trim = 4L, extend = 3L, forceSeqlevelsStyle = "Ensembl")
+
+bam2bw(bam, output_bw = "mono_centers.bw", paired = TRUE, binWidth = 5L,
+       type = "center", minFragLength = 140, maxFragLength = 220,
+       trim = 4L, extend = 10L, forceSeqlevelsStyle = "Ensembl")
+```
+
+## Get the sites with high confidence motif occurrences on chr19
+
+```{r}
+ah <- AnnotationHub()
+genome <- ah[["AH68356"]]          # mouse genome (2bit)
+chr19  <- import(genome)["19"] #get the sequence for 
+
+# get CTCF motif 
+motif  <- MotifDb::query(MotifDb, c("CTCF", "Mus"))[[1]]
+motif2 <- convert_motifs(motif, class = "TFBSTools-PFMatrix")
+
+# find motic matches 
+moi <- motifmatchr::matchMotifs(motif2, chr19, out = "positions",
+                                p.cutoff = 1e-5)[[1]]
+#convert to GRanges
+moi <- as(setNames(moi, names(chr19)), "GRanges")
+length(moi)
+```
+
+## Plot both signals around the motif occurrences
+
+```{r}
+tracks <- c(NF_cuts = "NF_cuts.bw", mono_centers = "mono_centers.bw")
+
+sm <- signal2Matrix(tracks, moi, w = 5, extend = 300)
+
+plotEnrichedHeatmaps(sm, trim = 0.95, multiScale = TRUE,
+                     axis_name = "CTCF motif", use_raster = FALSE)
+```
+
+To make the relationship between the two signals clearer, we can overlay their aggregated profiles:
+
+```{r}
+d <- meltSignals(sm)
+ggplot(d, aes(position, mean, colour = sample)) +
+  geom_line(linewidth = 1.2) +
+  labs(x = "Position relative to CTCF motif (bp)",
+       y = "Mean signal",
+       title = "ATAC-seq signal around CTCF motifs on chr19") +
+  theme_bw()
+```
+
+
+# Part 2
+
+## Load the data
+
+```{r}
+if (!file.exists("peakCounts.rds")) {
+  download.file("https://ethz-ins.org/content/mouse_mm38_hippocampus.peakCounts.SE.rds",
+                "peakCounts.rds", mode = "wb")
+}
+se <- readRDS("peakCounts.rds")
+se
+colData(se)
+```
+
+## Annotate regions 
+
+```{r}
+se <- GenomeInfoDb::keepStandardChromosomes(se, pruning.mode = "coarse")
+seqlevelsStyle(se) <- "UCSC"
+se <- chromVAR::addGCBias(se, genome = BSgenome.Mmusculus.UCSC.mm10)
+```
+
+## Get motifs and scan regions
+
+```{r}
+motifs <- query(MotifDb, "HOCOMOCOv13")
+motifs <- do.call(TFBSTools::PWMatrixList,
+                  convert_motifs(motifs, class = "TFBSTools-PWMatrix"))
+names(motifs) <- make.unique(sapply(motifs, \(x) gsub("\\..+", "", x@name)))
+
+matches <- motifmatchr::matchMotifs(motifs, se,
+                                    genome = BSgenome.Mmusculus.UCSC.mm10)
+```
+
+## Get motif deviations
+
+```{r}
+dev <- betterChromVAR(se, matches)
+dev
+```
+
+## Differential analysis
+
+```{r}
+# infer sex and condition from sample names
+dev$sex       <- ifelse(grepl("female", colnames(dev), ignore.case = TRUE),
+                        "female", "male")
+dev$condition <- ifelse(grepl("FSS", colnames(dev)), "Stressed", "Control")
+
+table(dev$sex, dev$condition)
+
+design <- model.matrix(~condition + sex, data = as.data.frame(colData(dev)))
+fit <- eBayes(lmFit(assay(dev, "z"), design))
+res <- as.data.frame(topTable(fit, coef = "sexmale", number = Inf))
+res$motif <- rownames(res)
+
+head(res, 10)
+```
+
+```{r}
+ggplot(res, aes(logFC, -log10(adj.P.Val), label = motif)) +
+  geom_text(size = 3) +
+  labs(x = "log fold-change (male vs. female)",
+       y = "-log10(adjusted p-value)",
+       title = "Sex-differential motif accessibility") +
+  theme_bw()
+```
+
+```{r}
+top_motifs <- head(rownames(res), 10)
+sechm(dev, top_motifs,
+      top_annotation = c("sex", "condition"),
+      gaps_at = "sex",
+      assayName = "z",
+      use_raster = FALSE)
+```
