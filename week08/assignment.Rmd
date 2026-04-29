@@ -1,0 +1,85 @@
+---
+title: "Week 8 assignment"
+author: "Arghavan Kassraie"
+output: html_document
+---
+
+```{r setup}
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(ggplot2)
+  library(AnnotationHub)
+  library(ensembldb)
+  library(edgeR)
+  library(rtracklayer)
+  library(BiocParallel)
+  library(bsseq)   # Class and tools to analyze bisulfite sequencing data at CpG-level
+  library(DMRcate) # Identification of differentially-methylated regions
+})
+```
+
+# 1. Plot a heatmap of the methylation levels of the genes in top 5 DMR regions (from the practical) located on chr1.
+
+```{r}
+download.file("https://ethz-ins.org/content/w11_practical.zip", "w11_practical.zip")
+unzip("w11_practical.zip")
+```
+
+```{r}
+# Load data
+dmrs <- readRDS("dmr.rds")
+bs <- readRDS("ESC_astrocytes_BSseq.rds")
+```
+```{r}
+# Remove CpGs with 0 coverage
+bs <- bs[rowSums(assay(bs,"Cov") > 0) == ncol(bs), ]
+bs <- BSmooth(bs, BPPARAM = MulticoreParam(4))
+
+# Filter to chr1 and take top 5 
+dmrs_chr1 <- dmrs[seqnames(dmrs) == "chr1"]
+top5 <- dmrs_chr1[order(abs(dmrs_chr1$meandiff), decreasing=TRUE)][1:5]
+
+# Extract methylation in the DMR regions 
+meth_top5 <- bsseq::getMeth(bs, regions=top5, what="perRegion")
+rownames(meth_top5) <- paste0("DMR_", seq_len(nrow(meth_top5)))
+colnames(meth_top5) <- colnames(bs)
+
+# Plot heatmap
+pheatmap(meth_top5, name="methylation")
+```
+
+#2. Use the differentially-methylated regions from the practical, and compare those changes to changes in accessibility.
+
+```{r}
+# Load data
+dmrs <- readRDS("dmr.rds")
+atac <- readRDS("ATAC_AstroVsESC_subset.rds")
+
+# Find overlaps
+overlaps <- findOverlaps(dmrs, atac)
+
+methDiff <- dmrs$meandiff[queryHits(overlaps)]
+atacLFC  <- atac$logFC[subjectHits(overlaps)]
+
+df <- data.frame(methylation_diff = methDiff,
+                 ATAC_logFC = atacLFC)
+
+# Correlation
+cor.test(methDiff, atacLFC)
+
+# Boxplot
+df$meth_direction <- ifelse(df$methylation_diff > 0,
+                            "More methylated\nin astrocytes",
+                            "Less methylated\nin astrocytes")
+
+ggplot(df, aes(x=meth_direction, y=ATAC_logFC, fill=meth_direction)) +
+  geom_boxplot() +
+  geom_hline(yintercept=0, linetype="dashed") +
+  labs(x="Methylation change (astrocytes vs ESC)",
+       y="Chromatin accessibility logFC (astrocytes vs ESC)",
+       title="Agreement between DNA methylation and chromatin accessibility changes") +
+  theme_bw() +
+  theme(legend.position="none")
+```
+
+I overlapped the differentially methylated regions (DMRs) with differentially accessible chromatin regions (ATAC-seq) genome-wide and compared their effect sizes. Regions that gained methylation in astrocytes tended to lose chromatin accessibility, while regions that lost methylation tended to gain accessibility (r = -0.20, p < 2.2e-16,statistically significant p value but with low negative correlation), consistent with the known repressive role of DNA methylation on chromatin accessibility. The low negative correlation shows that methylation and accessibility are not fully coupled. 
