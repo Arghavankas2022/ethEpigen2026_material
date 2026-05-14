@@ -1,0 +1,99 @@
+---
+title: "Week 9 assignment"
+author: "Arghavan Kassraie"
+output: html_document
+---
+
+
+```{r libraries}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(epiwraps)
+  library(ggplot2)
+  library(rGREAT)
+  library(rtracklayer)
+  library(ComplexHeatmap)
+})
+```
+
+## Download data
+```{r download}
+options(timeout = 6000)
+download.file(
+  "https://ethz-ins.org/content/clustering_assignment.zip",
+  "clustering_assignment.zip"
+)
+unzip("clustering_assignment.zip")
+```
+
+## Prepare regions and tracks
+```{r regions}
+tracks <- c(
+  "Creb1.bw",
+  "Creb3.bw",
+  "Creb3L1.bw"
+)
+peak_files <- c(
+  "Creb1.bed",
+  "Creb3.bed",
+  "Creb3L1.bed"
+)
+# Import peaks
+peaks <- lapply(peak_files, rtracklayer::import.bed)
+# Keep high confidence peaks
+peaks <- lapply(peaks, function(x) x[x$score > 800])
+# Merge regions
+regions <- reduce(unlist(GRangesList(peaks)))
+```
+
+## Clustering and visualisation
+```{r clustering, fig.width=10, fig.height=8}
+ese <- signal2Matrix(tracks, regions, extend = 2000)
+
+set.seed(123)
+cl <- clusterSignalMatrices(ese, k = 4)
+rowData(ese)$cluster <- cl
+
+mycolors <- c("1"="red", "2"="blue", "3"="darkgreen", "4"="black")
+
+plotEnrichedHeatmaps(ese,
+                     row_split  = rowData(ese)$cluster,
+                     mean_color = mycolors,
+                     colors     = c("white", "darkred"),
+                     use_raster = FALSE)
+```
+
+## GO enrichment on cluster 3
+```{r enrichment, fig.width=9, fig.height=6}
+split_regions <- split(
+  rowRanges(ese),
+  rowData(ese)$cluster
+)
+res <- great(
+  split_regions[["3"]],
+  gene_sets  = "GO:BP",
+  tss_source = "hg38",
+  background = regions,
+  cores      = 2
+)
+bp <- getEnrichmentTables(res)
+ggplot(
+  head(bp, 15),
+  aes(
+    fold_enrichment,
+    reorder(description, p_adjust),
+    size  = observed_region_hits,
+    color = -log10(p_adjust)
+  )
+) +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(
+    title = "GO Enrichment Analysis – Cluster 3",
+    x = "Fold enrichment",
+    y = NULL
+  ) +
+  theme_bw()
+```
+Cluster 1 is primarily driven by Creb1-specific binding, whereas Cluster 3 shows binding mainly exclusive to Creb3. In contrast, Cluster 2 highlights shared binding sites strongly occupied by all three factors, and Cluster 4 represents regions co bounded by Creb1 and Creb3L1 with minimal Creb3 involvement. GO enrichment analysis of cluster 3 reveals over representation of terms related to cellular response to stimulus, cell communication, and cell surface receptor signaling, consistent with Creb3's role as a stress responsive transcription factor. Together, these results show that while CREB-family members share many binding sites, Creb3 and Creb3L1 each occupy distinct binding profiles reflecting their specific biological roles.
+
