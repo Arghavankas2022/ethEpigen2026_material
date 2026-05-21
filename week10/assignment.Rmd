@@ -1,0 +1,144 @@
+---
+title: "Week 10 assignment"
+author: "Arghavan Kassraie"
+date: "2026-05-20"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(ensembldb)
+  library(AnnotationHub)
+  library(ggplot2)
+})
+```
+
+# Obtain peaks and rE2G predictions
+
+```{r}
+download.file(
+  "https://www.encodeproject.org/files/ENCFF776TFX/@@download/ENCFF776TFX.bed.gz",
+  destfile = "p300.narrowPeak.gz",
+  mode = "wb"
+)
+download.file(
+  "https://www.encodeproject.org/files/ENCFF539BQT/@@download/ENCFF539BQT.bed.gz",
+  destfile = "ENCFF539BQT.bed.gz",
+  mode = "wb"
+)
+
+peaks <- rtracklayer::import("p300.narrowPeak.gz")
+seqlevelsStyle(peaks) <- "ensembl"
+
+re2g_df <- read.delim(
+  "ENCFF539BQT.bed.gz",
+  header       = TRUE,
+  comment.char = "",
+  check.names  = FALSE
+)
+colnames(re2g_df)[1] <- "chr"
+
+head(re2g_df)
+ncol(re2g_df)
+
+re2g <- GRanges(
+  seqnames = re2g_df$chr,
+  ranges   = IRanges(
+    start = as.integer(re2g_df$start),
+    end   = as.integer(re2g_df$end)
+  ),
+  target = re2g_df$TargetGene
+)
+seqlevelsStyle(re2g) <- "ensembl"
+```
+
+# Subset and label peaks with predicted rE2G targets
+
+```{r}
+hits   <- findOverlaps(peaks, re2g)
+p_sub  <- peaks[queryHits(hits)]
+p_sub$predicted_target <- re2g$target[subjectHits(hits)]
+```
+
+# Find nearest TSS
+
+```{r}
+if (!file.exists("promoters.rds")) {
+  download.file(
+    "https://ethz-ins.org/content/hgEns104.promoters.rds",
+    destfile = "promoters.rds",
+    mode = "wb"
+  )
+}
+proms <- readRDS("promoters.rds")
+
+tss <- promoters(proms, upstream = 0, downstream = 1)
+seqlevelsStyle(tss) <- "ensembl"
+
+p_sub$predicted_target <- sub("\\..*", "", p_sub$predicted_target)
+
+p_sub$nearest_gene <- tss$gene_name[nearest(p_sub, tss)]
+```
+
+# Split upstream/downstream of predicted target
+
+```{r}
+
+target_tss_idx <- match(p_sub$predicted_target, tss$gene_name)
+valid          <- !is.na(target_tss_idx)
+p_sub          <- p_sub[valid]
+target_tss     <- tss[target_tss_idx[valid]]   
+
+centers <- start(p_sub) + width(p_sub) / 2
+
+is_up <- ifelse(
+  strand(target_tss) == "+",
+  centers < start(target_tss),
+  centers > start(target_tss)
+)
+
+p_sub$direction      <- ifelse(is_up, "upstream", "downstream")
+p_sub$dist_to_target <- abs(centers - start(target_tss))
+```
+
+# Report proportion of cases where predicted target is the closest gene
+
+```{r}
+tapply(p_sub$predicted_target == p_sub$nearest_gene, p_sub$direction, mean)
+```
+
+# Plot distance distributions between peak and predicted target TSS
+
+```{r}
+ggplot(as.data.frame(p_sub), aes(x = dist_to_target, fill = direction, colour = direction)) +
+  geom_density(alpha = 0.3, linewidth = 0.8) +
+  scale_x_log10(
+    breaks = c(1e1, 1e2, 1e3, 1e4, 1e5, 1e6),
+    labels = c("10", "100", "1kb", "10kb", "100kb", "1Mb")
+  ) +
+  scale_fill_manual(
+    values = c(downstream = "#2166AC", upstream = "#B2182B"),
+    labels = c("Downstream", "Upstream")
+  ) +
+  scale_colour_manual(
+    values = c(downstream = "#2166AC", upstream = "#B2182B"),
+    labels = c("Downstream", "Upstream")
+  ) +
+  labs(
+    x      = "Distance to predicted target TSS",
+    y      = "Density",
+    fill   = "Direction",
+    colour = "Direction"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.line        = element_line(colour = "black", linewidth = 0.5),
+    axis.text        = element_text(colour = "black"),
+    axis.title       = element_text(colour = "black", face = "bold"),
+    legend.title     = element_text(face = "bold"),
+    legend.background = element_rect(fill = "white", colour = "grey80"),
+    panel.grid.major = element_line(colour = "grey92", linewidth = 0.4),
+    plot.margin      = margin(10, 15, 10, 10)
+  )
+```
