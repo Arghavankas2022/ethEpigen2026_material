@@ -1,0 +1,149 @@
+---
+title: "Week 11 Assignment"
+author: "Arghavan Kassraie, Gabriele Olendraite"
+date: "2026-05-26"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+<style>
+body {
+  font-family: "Helvetica", sans-serif;
+  line-height: 1.7;
+}
+
+h1 {
+  color: #6A4C93;
+  border-bottom: 2px solid #D6C6E1;
+  padding-bottom: 6px;
+  margin-top: 35px;
+}
+
+h2 {
+  color: #8B5E83;
+  margin-top: 28px;
+}
+
+blockquote {
+  background-color: #F7F4FA;
+  border-left: 4px solid #B8A1CC;
+  padding: 10px 15px;
+  font-size: 0.95em;
+  color: #444;
+}
+
+table {
+  width: 90%;
+}
+
+thead {
+  background-color: #E9DFF0;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background-color: #DDD;
+  margin-top: 30px;
+  margin-bottom: 30px;
+}
+
+strong {
+  color: #5A3E7A;
+}
+</style>
+
+# 1. Topic
+
+This project reproduces key genomic analyses from:
+
+<blockquote>
+Hokenson RE et al. <strong>Hippocampal estrogen levels, receptor types, and epigenetics contribute to sex-specific memory vulnerabilities to concurrent acute stresses.</strong> <em>Neuron</em> 114, 1454–1472 (2026).
+</blockquote>
+
+The paper shows that stress-vulnerable mice (**males and proestrus females**) share a **permissive chromatin landscape** at estrogen receptor target gene promoters, while stress-resilient estrus females display **repressive/bivalent chromatin** at the same loci.
+
+---
+
+# 2. Data
+
+Both datasets are publicly available on GEO:
+
+| Data type | Accession |
+|:---|:---|
+| RNA-seq | [GSE313357](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE313357) |
+| CUT&RUN-seq (H3K4me3, H3K27me3) | [GSE313359](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE313359) |
+
+For RNA-seq we will use the processed files deposited on GEO.
+
+For CUT&RUN, the GEO deposit contains only bigWig files, which are insufficient for ChromHMM-based bivalency and motif analyses. Reproducing Figures 3J–L will therefore require either downloading raw FASTQs from SRA and rerunning the full pipeline  *(QC → alignment → ChromHMM segmentation to obtain BED files)*  or obtaining the ChromHMM output files directly from the authors.
+
+The authors note that "Additional information needed to reanalyze the data presented here is available from the lead contact upon request". Therefore, We will contact them as a first step.
+
+## Experimental design
+
+- C57BL6J mice
+- 2–6 months old
+- n = 3 biological replicates per group
+- Hippocampal RNA and chromatin profiled from the same biological sample (S3EQ protocol)
+
+### Groups
+
+- Adult males
+- Proestrus females
+- Estrus females
+
+---
+
+# 3. Analyses to Reproduce
+
+## 3.1 PCA of RNA-seq
+
+Reproduce the PCA showing males and proestrus females clustering together (**MACS-vulnerable**) and separating clearly from estrus females (**MACS-resilient**).
+
+---
+
+## 3.2 DEG UpSet Plot + Volcano Plots
+
+Pairwise DESeq2 contrasts:
+
+- estrus vs. proestrus
+- estrus vs. male
+- proestrus vs. male
+
+Visualizations:
+
+- UpSet plot showing unique and shared DEGs across comparisons
+- Volcano plots for better visualization of differential expression
+
+---
+
+## 3.3 GO Enrichment
+
+GO analysis on each DEG list.
+
+Expected findings:
+
+- **Estrus vs. proestrus:** synaptic signaling and organization
+- **Estrus vs. male:** metabolism-related processes
+
+---
+
+## 3.4 Motif analysis
+
+Reproduce the finding that **TFAP2C** and **EGR1** transcription factor motifs are enriched in:
+
+- bivalent promoters in estrus females (**resilient**)
+- permissive promoters in proestrus females and males (**vulnerable**)
+
+using MEME/SEA on group-specific chromatin segments.
+
+---
+
+## 3.5 Extension
+
+Among genes differentially expressed between estrus and proestrus females, test whether those same genes also differ in chromatin state between the two groups.
+
+This would directly link permissive chromatin accessibility to transcriptional output.
